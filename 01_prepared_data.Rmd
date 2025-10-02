@@ -1,0 +1,747 @@
+---
+title: "Data Cleaning and Analysis"
+output: html_notebook
+---
+
+## Loading Required Libraries
+
+```{r}
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(patchwork)
+```
+
+## Reading and Inspecting Data
+
+```{r}
+## old data ##
+field_data <- read.csv("~/Remote-sensing/DATA/MF_TreeCensus_Cleaned26082025.csv")
+head(field_data)
+
+
+```
+
+```{r}
+## new data ##
+new_field_data <- read.csv("~/Remote-sensing/DATA/MF_TreeCensus_Cleaned20251002.csv")
+head(new_field_data)
+```
+
+## Data Validation
+# OLD Data 
+
+```{r}
+#Total amount of data
+n_total <- nrow(field_data)
+
+#count distinct tree
+#n_tag <- length(unique(field_data$Tag))
+n_tag <- n_distinct(field_data$Tag)
+
+#The number of unique (Tag, StemTag) pairs 
+n_unique_stem <- nrow(field_data %>% distinct(Tag, StemTag))
+
+n_total
+n_tag
+n_unique_stem
+```
+
+## NEW Data ##
+```{r}
+#Total amount of data
+new_n_total <- nrow(new_field_data)
+
+#count distinct tree
+#n_tag <- length(unique(field_data$Tag))
+new_n_tag <- n_distinct(new_field_data$Tag)
+
+#The number of unique (Tag, StemTag) pairs 
+new_unique_stem <- nrow(new_field_data %>% distinct(Tag, StemTag))
+
+new_n_total
+new_n_tag
+new_unique_stem
+```
+
+
+```{r}
+## Check for duplicate rows ##
+#OLD Data
+
+#Identify rows where (Tag, StemTag) appears more than once
+dup_pairs <- field_data %>%
+  count(Tag, StemTag, name = "n") %>%
+  filter(n > 1)
+
+#View rows with duplicate (Tag, StemTag) pairs 
+duplicate_rows <- field_data %>%
+  semi_join(dup_pairs, by = c("Tag", "StemTag")) %>%  
+  arrange(Tag, StemTag)  
+  
+duplicate_rows
+nrow(duplicate_rows)
+```
+
+
+```{r}
+## Check for duplicate rows ##
+#New Data
+
+#Identify rows where (Tag, StemTag) appears more than once
+new_dup_pairs <- new_field_data %>%
+  count(Tag, StemTag, name = "n") %>%
+  filter(n > 1)
+
+#View rows with duplicate (Tag, StemTag) pairs 
+new_duplicate_rows <- new_field_data %>%
+  semi_join(new_dup_pairs, by = c("Tag", "StemTag")) %>%  
+  arrange(Tag, StemTag)  
+  
+new_duplicate_rows
+nrow(new_duplicate_rows)
+```
+
+
+```{r}
+#Filter to the first row per group
+#OLD Data
+
+df_nodup <- field_data %>%
+  group_by(Tag, StemTag) %>%
+  slice(1) %>%
+  ungroup()
+
+nrow(df_nodup)
+df_nodup
+
+```
+
+```{r}
+#Filter to the first row per group
+#NEW Data
+new_df_nodup <- new_field_data %>%
+  group_by(Tag, StemTag) %>%
+  slice(1) %>%
+  ungroup()
+
+nrow(new_df_nodup)
+new_df_nodup
+```
+
+
+```{r}
+#Check for missing values in each column
+#OLD Data
+colSums(is.na(df_nodup))
+```
+```{r}
+#Check for missing values in each column
+#NEW Data
+colSums(is.na(new_df_nodup))
+```
+
+```{r}
+#Check rows that have null DBH values
+#OLD Data
+DBH_na <- df_nodup %>%
+  filter(is.na(DBH)) 
+head(DBH_na)
+
+```
+```{r}
+#Check rows that have null DBH values
+#NEW Data
+new_DBH_na <- new_df_nodup %>%
+  filter(is.na(DBH)) 
+
+
+new_stemtag_na <- new_df_nodup %>%
+  filter(is.na(StemTag)) 
+
+new_DBH_na
+new_stemtag_na
+
+## New Data has no stemtag = 2 rows !!!
+# and has no DBH = 4 rows
+```
+
+#CLEAN DATA
+
+```{r}
+#Keep observations with DBH present and DBH ≥ 5
+#old data
+data_clean <- df_nodup  %>%
+  filter(!is.na(DBH) & DBH >= 5)
+
+nrow(data_clean)
+head(data_clean)
+```
+
+```{r}
+#Keep observations with DBH present and DBH ≥ 5 and Stemtag present
+#new data
+
+new_data_clean <- new_df_nodup  %>%
+  filter(!is.na(DBH) & DBH >= 5 & !is.na(StemTag))
+
+nrow(new_data_clean)
+head(new_data_clean)
+```
+
+# VISUALIZATION
+
+```{r}
+#	Identify the species in the dataset 
+# OLD DATA #
+
+species_tree <- data_clean %>%
+  group_by(Genus.species) %>%
+  summarise(count = n())  %>%
+  arrange(desc(count))
+
+species_tree
+
+#nrow(species_tree)
+```
+
+```{r}
+#	Identify the species in the dataset 
+# New DATA #
+
+new_species_tree <- new_data_clean %>%
+  group_by(Genus_species) %>%
+  summarise(count = n())  %>%
+  arrange(desc(count))
+
+new_species_tree
+
+#nrow(species_tree)
+```
+
+```{r}
+#OLD DATA
+# 1) นับจำนวนกิ่งต่อ "ต้น"
+stem_count <- data_clean %>%
+  group_by(Tag, Genus.species) %>%
+  summarise(n_stems = n(), .groups = "drop")
+
+# 2) เลือกเฉพาะต้นที่แตกกิ่ง (มีมากกว่า 1 กิ่ง)
+multi_stem <- stem_count %>%
+  filter(n_stems > 1)
+
+# 3) นับจำนวน "ต้นที่แตกกิ่ง" ต่อ species
+species_multi_count <- multi_stem %>%
+  count(Genus.species, sort = TRUE)
+  # %>%
+  #slice_max(n, n = 12)
+species_multi_count
+```
+```{r}
+#OLD DATA
+species_multi_count <- data_clean %>%
+  group_by(Tag, Genus.species) %>%
+  summarise(n_stems = n(), .groups = "drop") %>%
+  filter(n_stems > 1) %>%
+  count(Genus.species, sort = TRUE) 
+  #%>%  slice_max(n, n = 12)
+```
+
+```{r}
+species_multi_count
+```
+
+
+```{r}
+
+ggplot(species_multi_count, aes(x = reorder(Genus.species, n), y = n)) +
+  geom_col(fill = "#26C4B8") +
+  coord_flip() +
+  labs(
+    title = "Number of Multi-stem Trees by Species",
+    x = "Species",
+    y = "Number of Multi-stem Trees"
+  ) +
+  theme_minimal(base_size = 12)
+```
+```{r}
+# 1) หา Top 12 species (กันซ้ำรายต้นก่อน)
+top12_species <- data_clean %>%
+  distinct(Tag, Genus.species) %>%
+  count(Genus.species, sort = TRUE) %>%
+  slice_max(n, n = 12)
+
+# 2) Plot bar chart
+ggplot(top12_species, aes(x = reorder(Genus.species, n), y = n)) +
+  geom_col(fill = "#26C4B8") +
+  coord_flip() +
+  labs(
+    title = "Top 12 Species by Number of Trees",
+    x = "Species",
+    y = "Number of Trees"
+  ) +
+  theme_minimal(base_size = 12)
+```
+
+
+```{r}
+#NEW DATA
+# 1) นับจำนวนกิ่งต่อ "ต้น"
+new_stem_count <- new_data_clean %>%
+  group_by(Tag, Genus_species) %>%
+  summarise(n_stems = n(), .groups = "drop")
+
+# 2) เลือกเฉพาะต้นที่แตกกิ่ง (มีมากกว่า 1 กิ่ง)
+new_multi_stem <- new_stem_count %>%
+  filter(n_stems > 1)
+
+# 3) นับจำนวน "ต้นที่แตกกิ่ง" ต่อ species
+new_species_multi_count <- new_multi_stem %>%
+  count(Genus_species, sort = TRUE)
+
+new_species_multi_count
+```
+
+```{r}
+#NEW DATA
+new_species_multi_count <- new_data_clean %>%
+  group_by(Tag, Genus_species) %>%
+  summarise(n_stems = n(), .groups = "drop") %>%
+  filter(n_stems > 1) %>%
+  count(Genus_species, sort = TRUE)
+  # %>% slice_max(n, n = 12)
+new_species_multi_count
+```
+
+```{r}
+# ใส่ label ว่าเป็น Old หรือ New
+species_multi_count <- species_multi_count %>%
+  mutate(Source = "Old")
+
+new_species_multi_count <- new_species_multi_count %>%
+  mutate(Source = "New")
+
+# รวมตาราง
+combined_multi_count <- bind_rows(
+  species_multi_count %>% rename(Species = Genus.species),
+  new_species_multi_count %>% rename(Species = Genus_species)
+)
+
+
+
+```
+
+```{r}
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(stringr)
+
+# 0) ทำความสะอาดชื่อสปีชีส์กันกรณีเว้นวรรค/รูปแบบต่างกัน
+combined_multi_count <- combined_multi_count %>%
+  mutate(Species = str_squish(Species))
+
+# 1) หา Top 12 จากผลรวม (Old + New)
+top12_species <- combined_multi_count %>%
+  group_by(Species) %>%
+  summarise(Total = sum(n, na.rm = TRUE), .groups = "drop") %>%
+  arrange(desc(Total)) %>%
+  slice_head(n = 12) %>%
+  pull(Species)
+
+# 2) กรองเฉพาะ Top 12 และกำหนดลำดับแกน X ตาม Total (มาก -> น้อย)
+species_order <- combined_multi_count %>%
+  group_by(Species) %>%
+  summarise(Total = sum(n, na.rm = TRUE), .groups = "drop") %>%
+  filter(Species %in% top12_species) %>%
+  arrange(desc(Total)) %>%
+  pull(Species)
+
+combined_top12 <- combined_multi_count %>%
+  filter(Species %in% top12_species) %>%
+  mutate(Species = factor(Species, levels = species_order)) %>%
+  # 3) ให้แต่ละสปีชีส์มีข้อมูล Old และ New อย่างละ 1 แท่ง (ถ้าไม่มี เติม 0)
+  complete(Species, Source, fill = list(n = 0))
+
+# กำหนดลำดับ Source = Old ก่อน New
+combined_top12 <- combined_top12 %>%
+  mutate(Source = factor(Source, levels = c("Old", "New")))
+
+# Plot
+ggplot(combined_top12, aes(x = Species, y = n, fill = Source)) +
+  geom_col(position = "dodge") +
+  labs(
+    x = "GenusSpecies",
+    y = "Number of multi-stem trees",
+    title = "Top 12 species: Old vs New (multi-stem count)"
+  ) +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    legend.position = "top"
+  )
+
+```
+```{r}
+ymax <- max(combined_top12$n, na.rm = TRUE)
+
+ggplot(combined_top12, aes(x = Species, y = n, fill = Source)) +
+  geom_col(position = "dodge") +
+  scale_y_continuous(
+    breaks = seq(0, ymax, by = 50),      # กำหนดช่วงทุก 50
+    labels = scales::comma               # ใส่ comma เช่น 1,000
+  ) +
+  labs(
+    x = "GenusSpecies",
+    y = "Number of multi-stem trees",
+    title = "Top 12 species: Old vs New (multi-stem count)"
+  ) +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    legend.position = "top"
+  )
+```
+
+
+
+```{r}
+#	Bar plot of total tree counts by species
+# OLD data
+
+ggplot(species_tree, aes(x = reorder(Genus.species, count), y = count)) +
+  geom_col(fill = "steelblue") +
+  coord_flip() +  # flip the axis
+  labs(title = "Tree count by species ",
+       x = "GenusSpecies",
+       y = "number of tree") +
+  theme_minimal()
+```
+
+```{r}
+#	Bar plot of total tree counts by species
+# New data
+
+ggplot(new_species_tree, aes(x = reorder(Genus_species, count), y = count)) +
+  geom_col(fill = "steelblue") +
+  coord_flip() +  # flip the axis
+  labs(title = "Tree count by species ",
+       x = "GenusSpecies",
+       y = "number of tree") +
+  theme_minimal()
+```
+
+
+
+```{r}
+#Bar plot of the 12 most abundant species 
+#OLD data
+
+top12 <- species_tree %>% slice_head(n = 12)
+
+ggplot(top12, aes(x = reorder(Genus.species, count), y = count)) +
+  geom_col(fill = "forestgreen") +
+  coord_flip() +
+  labs(title = "Top 12 Most common GenusSpecies OLD data ",
+       x = "GenusSpecies",
+       y = "number of tree") +
+  theme_minimal()
+```
+
+```{r}
+#Bar plot of the 12 most abundant species 
+#New Data
+
+top12 <- new_species_tree %>% slice_head(n = 12)
+
+ggplot(top12, aes(x = reorder(Genus_species, count), y = count)) +
+  geom_col(fill = "forestgreen") +
+  coord_flip() +
+  labs(title = "Top 12 Most common GenusSpecies New Data",
+       x = "GenusSpecies",
+       y = "number of tree") +
+  theme_minimal()
+```
+
+
+# DBH Distribution by species
+
+# DBH for tree level
+
+```{r}
+#Calculate tree-level DBH
+# OLD data
+dbh_tree <- data_clean %>%
+  filter(!is.na(DBH)) %>%             
+  group_by(Tag, Genus.species) %>%     
+  summarise(DBH_tree = sqrt(sum(DBH^2)), .groups = "drop")
+
+```
+
+```{r}
+dbh_tree
+```
+
+
+```{r}
+#Calculate tree-level DBH
+# New data
+new_dbh_tree <- new_data_clean %>%
+  filter(!is.na(DBH)) %>%             
+  group_by(Tag, Genus_species) %>%     
+  summarise(DBH_tree = sqrt(sum(DBH^2)), .groups = "drop")
+```
+
+```{r}
+new_dbh_tree
+```
+
+
+
+```{r}
+# OLD data
+# Prepare a list of the top 12 species at the tree level
+distribution_species_tree <- dbh_tree %>%
+  count(Genus.species, sort = TRUE) %>%
+  slice_max(n, n = 12) %>%
+  pull(Genus.species)
+
+# Arrange species in ascending order of abundance
+species_order_tree <- dbh_tree %>%
+  count(Genus.species, sort = TRUE) %>%
+  filter(Genus.species %in% distribution_species_tree) %>%
+  pull(Genus.species)  %>%
+  rev()
+
+# boxplot (tree level)
+ggplot(
+  dbh_tree %>%
+    filter(Genus.species %in% distribution_species_tree) %>%
+    mutate(Genus.species = factor(Genus.species, levels = species_order_tree)),
+  aes(x = Genus.species, y = DBH_tree)
+) +
+  geom_boxplot(fill = "#26C4B8", outlier.color = "#E6B800", outlier.size = 1) +
+  coord_flip() +
+  labs(
+    title = "Tree-level DBH Distribution (Top 12 Species) OLD DATA",
+    x = "GenusSpecies",
+    y = "DBH (cm)"
+  ) +
+  theme_minimal(base_size = 12)
+```
+
+```{r}
+# New Data
+# Prepare a list of the top 12 species at the tree level
+distribution_new_species_tree <- new_dbh_tree %>%
+  count(Genus_species, sort = TRUE) %>%
+  slice_max(n, n = 12) %>%
+  pull(Genus_species)
+
+# Arrange species in ascending order of abundance
+new_species_order_tree <- new_dbh_tree %>%
+  count(Genus_species, sort = TRUE) %>%
+  filter(Genus_species %in% distribution_new_species_tree) %>%
+  pull(Genus_species)  %>%
+  rev()
+
+# boxplot (tree level)
+ggplot(
+  new_dbh_tree %>%
+    filter(Genus_species %in% distribution_new_species_tree) %>%
+    mutate(Genus_species = factor(Genus_species, levels = new_species_order_tree)),
+  aes(x = Genus_species, y = DBH_tree)
+) +
+  geom_boxplot(fill = "#E75480", outlier.color = "#E6B800", outlier.size = 1) +
+  coord_flip() +
+  labs(
+    title = "Tree-level DBH Distribution (Top 12 Species) NEW DATA",
+    x = "GenusSpecies",
+    y = "DBH (cm)"
+  ) +
+  theme_minimal(base_size = 12)
+```
+
+
+## DBH stem level
+
+# OLD data
+
+```{r}
+#The 12 species with the highest number of trees 
+distribution_species_stem <- data_clean %>%
+  distinct(Tag, Genus.species) %>%         
+  count(Genus.species, sort = TRUE) %>% 
+  slice_max(n, n = 12) %>%   
+  pull(Genus.species)
+
+#	Sequence of the 12 species for plotting, sorted in ascending order of abundance
+species_order_stem <- data_clean %>%
+  distinct(Tag, Genus.species) %>%
+  count(Genus.species, sort = TRUE) %>%
+  filter(Genus.species %in% distribution_species_stem) %>%
+  pull(Genus.species) %>%
+  rev()
+
+```
+
+
+```{r}
+# Box plot  for Stem level
+
+ggplot(
+  data_clean %>%
+    filter(Genus.species %in% distribution_species_stem) %>%
+    mutate(Genus.species = factor(Genus.species, levels = species_order_stem)),
+  aes(x = Genus.species, y = DBH)
+) +
+  geom_boxplot(fill = "#26C4B8", outlier.color = "#E6B800", outlier.size = 1) +
+  coord_flip() +
+  labs(
+    title = "Stem-level DBH Distribution (Top 12 Species) OLD DATA",
+    x = "GenusSpecies",
+    y = "DBH (cm)"
+  ) +
+  theme_minimal(base_size = 12)
+```
+
+#New data
+```{r}
+#The 12 species with the highest number of trees 
+new_distribution_species_stem <- new_data_clean %>%
+  distinct(Tag, Genus_species) %>%         
+  count(Genus_species, sort = TRUE) %>% 
+  slice_max(n, n = 12) %>%   
+  pull(Genus_species)
+
+#	Sequence of the 12 species for plotting, sorted in ascending order of abundance
+new_species_order_stem <- new_data_clean %>%
+  distinct(Tag, Genus_species) %>%
+  count(Genus_species, sort = TRUE) %>%
+  filter(Genus_species %in% new_distribution_species_stem) %>%
+  pull(Genus_species) %>%
+  rev()
+```
+
+```{r}
+# Box plot  for Stem level
+
+ggplot(
+  new_data_clean %>%
+    filter(Genus_species %in% new_distribution_species_stem) %>%
+    mutate(Genus_species = factor(Genus_species, levels = new_species_order_stem)),
+  aes(x = Genus_species, y = DBH)
+) +
+  geom_boxplot(fill = "#E75480", outlier.color = "#E6B800", outlier.size = 1) +
+  coord_flip() +
+  labs(
+    title = "Stem-level DBH Distribution (Top 12 Species) NEW DATA",
+    x = "GenusSpecies",
+    y = "DBH (cm)"
+  ) +
+  theme_minimal(base_size = 12)
+```
+
+
+
+
+```{r}
+#Density plot of DBH by Tree-level
+#OLD data
+species_order_tree <- dbh_tree %>%
+  count(Genus.species, sort = TRUE) %>%
+  slice_max(n, n = 12) %>%
+  pull(Genus.species)
+
+ggplot(
+  dbh_tree %>%
+    filter(Genus.species %in% species_order_tree) %>%
+    mutate(Genus.species = factor(Genus.species, levels = species_order_tree)),
+  aes(x = DBH_tree)
+) +
+  geom_density(fill = "#26C4B8", alpha = 0.6) +
+  facet_wrap(~ Genus.species, scales = "free") + 
+  labs(title = "Tree-level DBH Density (Top 12 Species) OLD DATA",
+       x = " DBH (cm)", y = "Density") +
+  theme_minimal(base_size = 10) +
+  theme(legend.position = "none")
+
+```
+
+```{r}
+#Density plot of DBH by Tree-level
+#NEW data
+new_species_order_tree <- new_dbh_tree %>%
+  count(Genus_species, sort = TRUE) %>%
+  slice_max(n, n = 12) %>%
+  pull(Genus_species)
+
+ggplot(
+  new_dbh_tree %>%
+    filter(Genus_species %in% new_species_order_tree) %>%
+    mutate(Genus_species = factor(Genus_species, levels = new_species_order_tree)),
+  aes(x = DBH_tree)
+) +
+  geom_density(fill = "#E75480", alpha = 0.6) +
+  facet_wrap(~ Genus_species, scales = "free") + 
+  labs(title = "Tree-level DBH Density (Top 12 Species) NEW DATA",
+       x = " DBH (cm)", y = "Density") +
+  theme_minimal(base_size = 10) +
+  theme(legend.position = "none")
+```
+
+
+```{r}
+#Density plot of DBH by Stem-level
+#OLD data
+species_order_stem <- data_clean %>%
+  distinct(Tag, Genus.species) %>%
+  count(Genus.species, sort = TRUE) %>%
+  filter(Genus.species %in% distribution_species_stem) %>%
+  pull(Genus.species)
+
+
+ggplot(
+  data_clean %>%
+    filter(Genus.species %in% distribution_species_stem) %>%
+    mutate(Genus.species = factor(Genus.species, levels = species_order_stem)),
+  aes(x = DBH, fill = Genus.species)
+) +
+  geom_density(fill = "#26C4B8", alpha = 0.6) +
+  facet_wrap(~ Genus.species, scales = "free") +
+  labs(
+    title = "Stem-level DBH Density (Top 12 Species) OLD DATA",
+    x = "DBH (cm)",
+    y = "Density"
+  ) +
+  theme_minimal(base_size = 10) +
+  theme(legend.position = "none")
+
+```
+
+```{r}
+#Density plot of DBH by Stem-level
+#NEW data
+new_species_order_tree <- new_data_clean %>%
+  distinct(Tag, Genus_species) %>%
+  count(Genus_species, sort = TRUE) %>%
+  filter(Genus_species %in% distribution_new_species_tree) %>%
+  pull(Genus_species)
+
+
+ggplot(
+  new_data_clean %>%
+    filter(Genus_species %in% distribution_new_species_tree) %>%
+    mutate(Genus_species = factor(Genus_species, levels = new_species_order_tree)),
+  aes(x = DBH, fill = Genus_species)
+) +
+  geom_density(fill = "#E75480", alpha = 0.6) +
+  facet_wrap(~ Genus_species, scales = "free") +
+  labs(
+    title = "Stem-level DBH Density (Top 12 Species) NEW DATA",
+    x = "DBH (cm)",
+    y = "Density"
+  ) +
+  theme_minimal(base_size = 10) +
+  theme(legend.position = "none")
+```
+
+

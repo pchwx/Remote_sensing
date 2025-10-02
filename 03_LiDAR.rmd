@@ -1,0 +1,136 @@
+---
+title: "LiDAR"
+output: html_notebook
+---
+
+## Loading Required Libraries
+
+```{r}
+library(sf)
+library(terra)
+library(ggplot2)
+library(sp)
+library(dplyr)
+library(purrr)
+library(knitr)
+library(kableExtra)
+library(raster)
+library(fields)
+library(RColorBrewer)
+```
+
+## Load LiDAR Canopy Height Model (CHM) rasters
+
+```{r}
+CHMlidar = rast("~/Remote-sensing/03_LiDAR/totCHM.tif")
+CHMlidar[CHMlidar<0]=0 
+plot(CHMlidar)
+str(CHMlidar)
+```
+
+## Crop and mask LiDAR raster with study boundary
+
+```{r}
+boundary = st_read("~/Remote-sensing/DATA/boundary_raster/MF_boundary_raster.shp")
+plot(boundary)
+
+#plot เพื่อดูอะไร??
+```
+```{r}
+CHMlidar <- crop(CHMlidar, vect(boundary))
+plot(CHMlidar)
+```
+
+```{r}
+CHMlidar <- mask(CHMlidar, vect(boundary))
+plot(CHMlidar, main = "La-un")
+```
+```{r}
+CHM_metrics <- function(AGBplots, CHMlidar) {
+  colnames(AGBplots)[colnames(AGBplots) == "AGB_s__"] <- "AGB_ha"
+  
+  meanTCH <- terra::extract(CHMlidar, AGBplots, fun = mean, na.rm = TRUE)
+  H40 <- terra::extract(CHMlidar, AGBplots, 
+                        fun = function(x) quantile(x, probs = 0.4, na.rm = TRUE))
+  H50 <- terra::extract(CHMlidar, AGBplots, 
+                        fun = function(x) quantile(x, probs = 0.5, na.rm = TRUE))
+  H60 <- terra::extract(CHMlidar, AGBplots, 
+                        fun = function(x) quantile(x, probs = 0.6, na.rm = TRUE))
+  H70 <- terra::extract(CHMlidar, AGBplots, 
+                        fun = function(x) quantile(x, probs = 0.7, na.rm = TRUE))
+  H80 <- terra::extract(CHMlidar, AGBplots, 
+                        fun = function(x) quantile(x, probs = 0.8, na.rm = TRUE))
+  H90 <- terra::extract(CHMlidar, AGBplots, 
+                        fun = function(x) quantile(x, probs = 0.9, na.rm = TRUE))
+  H98 <- terra::extract(CHMlidar, AGBplots, 
+                        fun = function(x) quantile(x, probs = 0.98, na.rm = TRUE))
+  
+  AGBplots$meanTCH <- meanTCH[, 2]
+  AGBplots$H40 <- H40[, 2]
+  AGBplots$H50 <- H50[, 2]
+  AGBplots$H60 <- H60[, 2]
+  AGBplots$H70 <- H70[, 2]
+  AGBplots$H80 <- H80[, 2]
+  AGBplots$H90 <- H90[, 2]
+  AGBplots$H98 <- H98[, 2]
+  
+  return(AGBplots)
+}
+```
+
+```{r}
+AGBplots_20m=st_read("~/Remote-sensing/polygon_20m_perHA.shp")
+```
+```{r}
+AGBplots_20m_new <- CHM_metrics(AGBplots_20m, CHMlidar)
+```
+
+```{r}
+Predict_AGB <- function(AGBplots, metric) {
+  
+  ## Build a LiDAR-AGB model
+  mod=lm(log(AGB_ha)~log(metric), data=AGBplots)
+  summary(mod)
+
+  rse=summary(mod)$sigma
+
+  AGBpredicted=exp(0.5*rse^2+predict(mod))
+
+  RMSE= sqrt(sum((AGBpredicted-AGBplots$AGB_ha)^2)/length(AGBpredicted))
+  RMSErel=100*RMSE/mean(AGBplots$AGB_ha)
+
+   #Print RMSE and relative RMSE
+   print(paste("RSE:", rse))
+   print(paste("RMSE:", RMSE))
+  print(paste("Relative RMSE:", RMSErel))
+
+  return(AGBpredicted)
+  }
+```
+
+```{r}
+AGBplots_20m_new$AGBpred_H98 <- Predict_AGB(AGBplots_20m_new, AGBplots_20m_new$H98)
+AGBplots_20m_new$AGBpred_H90 <- Predict_AGB(AGBplots_20m_new, AGBplots_20m_new$H90)
+AGBplots_20m_new$AGBpred_H80 <- Predict_AGB(AGBplots_20m_new, AGBplots_20m_new$H80)
+AGBplots_20m_new$AGBpred_H70 <- Predict_AGB(AGBplots_20m_new, AGBplots_20m_new$H70)
+AGBplots_20m_new$AGBpred_H60 <- Predict_AGB(AGBplots_20m_new, AGBplots_20m_new$H60)
+AGBplots_20m_new$AGBpred_H50 <- Predict_AGB(AGBplots_20m_new, AGBplots_20m_new$H50)
+AGBplots_20m_new$AGBpred_H40 <- Predict_AGB(AGBplots_20m_new, AGBplots_20m_new$H40)
+AGBplots_20m_new$AGBpred_meanTCH <- Predict_AGB(AGBplots_20m_new, AGBplots_20m_new$meanTCH)
+```
+```{r}
+plot(AGBplots_20m_new$AGB_ha,AGBplots_20m_new$AGBpred_H90 ,pch=20,xlab="observed AGB", ylab="predicted AGB",
+     cex.lab=1.3, 
+   xlim = c(0,max(AGBplots_20m_new$AGB_ha)),
+     ylim = c(0,max(AGBplots_20m_new$AGBpred_H90 )),
+     main = "La-un : 0.04 ha (quantile 90)")
+#abline(a=0,b=1)
+
+plot(AGBplots_20m_new$AGB_ha,AGBplots_20m_new$AGBpred_meanTCH ,pch=20,xlab="observed AGB", ylab="predicted AGB",
+     cex.lab=1.3, 
+     xlim = c(0,max(AGBplots_20m_new$AGB_ha)),
+     ylim = c(0,max(AGBplots_20m_new$AGBpred_meanTCH )),
+     main = "La-un : 0.04 ha (mean TCH)")
+abline(a=0,b=1)
+```
+

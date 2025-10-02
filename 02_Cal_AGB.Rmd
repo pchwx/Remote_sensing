@@ -1,0 +1,556 @@
+---
+title: "Above Ground Biomass (AGB) Estimation"
+output: html_notebook
+---
+
+## Loading Required Libraries
+
+```{r}
+library(sf)
+library(knitr)
+library(BIOMASS)
+library(ggplot2)
+library(dplyr)
+```
+
+
+```{r}
+#old data
+data_forAGB <- data_clean
+#nrow(data_forAGB)
+data_forAGB
+```
+
+```{r}
+#new data
+new_data_for_AGB <- new_data_clean
+new_data_for_AGB
+```
+
+
+```{r}
+#Checking and retrieving tree taxonomy
+#old data
+
+Taxo_old <- correctTaxo(
+  genus = data_forAGB$Genus.species,
+  useCache = TRUE, verbose = FALSE)
+
+saveRDS(Taxo_old, file = "~/Remote-sensing/taxo_old_data.rsd")
+
+data_forAGB$GenusCorrected <- Taxo$genusCorrected
+data_forAGB$SpeciesCorrected <- Taxo$speciesCorrected
+```
+
+```{r}
+Taxo_new <- correctTaxo(
+  genus = new_data_for_AGB$Genus_species,
+  useCache = TRUE, verbose = FALSE)
+
+saveRDS(Taxo_new, file = "~/Remote-sensing/taxo_new_data.rsd")
+
+new_data_for_AGB$GenusCorrected <- Taxo_new$genusCorrected
+new_data_for_AGB$SpeciesCorrected <- Taxo_new$speciesCorrected
+```
+
+
+#Retrieving Family and Order Information
+  #APG (Angiosperm Phylogeny Group) family and order (optional)
+
+```{r}
+APG_old <- getTaxonomy(data_forAGB$GenusCorrected, findOrder = TRUE)
+data_forAGB$familyAPG <- APG_old$family
+data_forAGB$orderAPG <- APG_old$order
+```
+
+```{r}
+APG_new <- getTaxonomy(new_data_for_AGB$GenusCorrected, findOrder = TRUE)
+new_data_for_AGB$familyAPG <- APG_new$family
+new_data_for_AGB$orderAPG <- APG_new$order
+```
+
+
+#Estimating Wood Density
+
+```{r}
+wood_densities_old <- getWoodDensity(
+  genus = data_forAGB$GenusCorrected,
+  species = data_forAGB$SpeciesCorrected,
+  stand = data_forAGB$Plot_name
+)
+
+# The reference dataset contains 16467 wood density values??
+
+wood_densities_old
+```
+
+```{r}
+wood_densities_new <- getWoodDensity(
+  genus = new_data_for_AGB$GenusCorrected,
+  species = new_data_for_AGB$SpeciesCorrected,
+  stand = new_data_for_AGB$Plot_name
+)
+
+wood_densities_new
+```
+
+
+
+
+```{r}
+#ดึงค่า meanWD จาก df wood_densities ไปใส่ใน df คอลัมน์ใหม่
+data_forAGB$WD <- wood_densities_old$meanWD
+new_data_for_AGB$WD <- wood_densities_new$meanWD
+```
+
+```{r}
+data_forAGB
+new_data_for_AGB
+```
+
+
+```{r}
+# dataset ของเรา มีต้นไม้กี่ต้นที่ได้ค่า wood density จากแต่ละระดับ (species/genus/family)
+sum(wood_densities_old$levelWD == "species")
+sum(wood_densities_old$levelWD == "genus")
+sum(!wood_densities_old$levelWD %in% c("genus", "species"))
+```
+
+```{r}
+# dataset ของเรา มีต้นไม้กี่ต้นที่ได้ค่า wood density จากแต่ละระดับ (species/genus/family)
+sum(wood_densities_new$levelWD == "species")
+sum(wood_densities_new$levelWD == "genus")
+sum(!wood_densities_new$levelWD %in% c("genus", "species"))
+```
+
+
+#Checking Missing Values After Wood Density Assignment
+
+```{r}
+#check missing value แต่ละคอลัมน์
+colSums(is.na(data_forAGB))
+```
+```{r}
+#check missing value แต่ละคอลัมน์
+colSums(is.na(new_data_for_AGB))
+```
+
+
+```{r}
+#ดูว่ามีแถวไหนบ้างที่ missing
+data_forAGB %>%
+  filter(is.na(familyAPG) | is.na(orderAPG))
+```
+
+
+```{r}
+utm_conner <- read.csv("~/Remote-sensing/DATA/utm_corner.csv")
+head(utm_conner)
+```
+
+```{r}
+conner_filtered <- utm_conner %>%
+  filter(Plot_name == unique(data_forAGB$Plot_name) & X_loc == 0 & Y_loc == 0)
+
+head(conner_filtered)
+```
+
+```{r}
+tree_data_old <- data_forAGB %>%
+  left_join(conner_filtered, by = "Plot_name") %>%
+  mutate(
+    abs_x = X_UTM + PX,
+    abs_y = Y_UTM + PY  
+  ) %>%
+  dplyr::select(abs_x, abs_y) 
+```
+
+```{r}
+tree_data_new <- new_data_for_AGB %>%
+  left_join(conner_filtered, by = "Plot_name") %>%
+  mutate(
+    abs_x = X_UTM + PX,
+    abs_y = Y_UTM + PY  
+  ) %>%
+  dplyr::select(abs_x, abs_y) 
+```
+
+
+```{r}
+tree_data_old
+tree_data_new
+```
+
+```{r}
+old_tree_sf <- st_as_sf(tree_data_old, coords = c("abs_x", "abs_y"), crs = 32647)
+new_tree_sf <- st_as_sf(tree_data_new, coords = c("abs_x", "abs_y"), crs = 32647)
+```
+
+```{r}
+old_tree_longlat <- st_transform(old_tree_sf, crs = 4326)
+new_tree_longlat <- st_transform(new_tree_sf, crs = 4326)
+```
+
+```{r}
+coords_longlat_old <- st_coordinates(old_tree_longlat)
+tree_data_old$lon <- coords_longlat_old[, 1]
+tree_data_old$lat <- coords_longlat_old[, 2]
+
+coords_longlat_new <- st_coordinates(new_tree_longlat)
+tree_data_new$lon <- coords_longlat_new[, 1]
+tree_data_new$lat <- coords_longlat_new[, 2]
+```
+
+```{r}
+coords_tree_old <- apply(tree_data_old[c("lon", "lat")], 2, mean)
+coords_tree_new <- apply(tree_data_new[c("lon", "lat")], 2, mean)
+```
+
+
+
+## Estimating Tree Height (H)
+
+
+```{r}
+H_chave_old <- retrieveH(
+  D = data_forAGB$DBH,
+  coord = coords_tree_old
+)
+```
+
+```{r}
+H_chave_new <- retrieveH(
+  D = new_data_for_AGB$DBH,
+  coord = coords_tree_new
+)
+```
+
+
+```{r}
+data_forAGB$H_chave <- H_chave_old$H
+new_data_for_AGB$H_chave <- H_chave_new$H
+```
+
+
+```{r}
+old_HD_model <- modelHD(
+  D = data_forAGB$DBH,
+  H = data_forAGB$H_chave,
+  method = "log2",
+  useWeight = TRUE
+)
+```
+
+```{r}
+new_HD_model <- modelHD(
+  D = new_data_for_AGB$DBH,
+  H = new_data_for_AGB$H_chave,
+  method = "log2",
+  useWeight = TRUE
+)
+```
+
+
+## Computing Above Ground Biomass (AGB)
+
+```{r}
+data_forAGB$AGB <- computeAGB(
+  D = data_forAGB$DBH,
+  WD = data_forAGB$WD,
+  H = data_forAGB$H_chave 
+)
+
+new_data_for_AGB$AGB <- computeAGB(
+  D = new_data_for_AGB$DBH,
+  WD = new_data_for_AGB$WD,
+  H = new_data_for_AGB$H_chave 
+)
+```
+
+## Propagating Errors in AGB Estimation (Monte Carlo)
+
+```{r}
+D_error_prop_old <- AGBmonteCarlo(
+  D = data_forAGB$DBH, WD = data_forAGB$WD, H = data_forAGB$H_chave,
+  Dpropag = "chave2004",
+  errWD = rep(0,nrow(data_forAGB)), errH = 0 
+)
+
+D_error_prop_new <- AGBmonteCarlo(
+  D = new_data_for_AGB$DBH, WD = new_data_for_AGB$WD, H = new_data_for_AGB$H_chave,
+  Dpropag = "chave2004",
+  errWD = rep(0,nrow(new_data_for_AGB)), errH = 0 
+)
+```
+
+```{r}
+new_data_for_AGB
+```
+
+
+```{r}
+WD_error_prop_old <- AGBmonteCarlo(
+  D = data_forAGB$DBH, WD = data_forAGB$WD, H = data_forAGB$H_chave,
+  errWD = wood_densities_old$sdWD,
+  Dpropag = 0 , errH = 0 
+)
+
+WD_error_prop_new <- AGBmonteCarlo(
+  D = new_data_for_AGB$DBH, WD = new_data_for_AGB$WD, H = new_data_for_AGB$H_chave,
+  errWD = wood_densities_new$sdWD,
+  Dpropag = 0 , errH = 0 
+)
+```
+
+```{r}
+H_model_error_prop_old <- AGBmonteCarlo(
+  D = data_forAGB$DBH, WD = data_forAGB$WD, 
+  HDmodel = HD_model, 
+  Dpropag = 0 , errWD = rep(0,nrow(data_forAGB)) 
+)
+
+H_model_error_prop_new <- AGBmonteCarlo(
+  D = new_data_for_AGB$DBH, WD = new_data_for_AGB$WD, 
+  HDmodel = HD_model, 
+  Dpropag = 0 , errWD = rep(0,nrow(new_data_for_AGB)) 
+)
+
+```
+
+```{r}
+error_prop_old <- AGBmonteCarlo(
+  D = data_forAGB$DBH,
+  WD =  data_forAGB$WD,        
+  H =  data_forAGB$H_chave, 
+  Dpropag = "chave2004",           
+  errWD = wood_densities_old$sdWD,    
+  errH = H_model_error_prop_old$sdAGB
+)
+
+error_prop_new <- AGBmonteCarlo(
+  D = new_data_for_AGB$DBH,
+  WD =  new_data_for_AGB$WD,        
+  H =  new_data_for_AGB$H_chave, 
+  Dpropag = "chave2004",           
+  errWD = wood_densities_new$sdWD,    
+  errH = H_model_error_prop_new$sdAGB
+)
+```
+
+```{r}
+error_prop_old[(1:4)]
+sum(data_forAGB$AGB)
+```
+```{r}
+error_prop_new[(1:4)]
+sum(new_data_for_AGB$AGB)
+```
+
+
+```{r}
+old_AGB_by_plot <- summaryByPlot(AGB_val = error_prop_old$AGB_simu, plot = data_forAGB$Plot_name, drawPlot = TRUE)
+new_AGB_by_plot <- summaryByPlot(AGB_val = error_prop_new$AGB_simu, plot = new_data_for_AGB$Plot_name, drawPlot = TRUE)
+```
+
+
+## Plot Spatial Configuration and Subplot Division
+
+```{r}
+Ranong_plot_corner <- utm_conner[utm_conner$Plot_name == "La-un (Ranong)",]
+```
+
+```{r}
+Ranong_plot_corner
+```
+
+
+```{r}
+fieldplot <- check_plot_coord(
+  corner_data =  Ranong_plot_corner,
+  proj_coord = c("X_UTM", "Y_UTM"),  
+  rel_coord = c("X_loc", "Y_loc"),
+  plot_ID = "Plot_name",
+  trust_GPS_corners = FALSE,
+  draw_plot = TRUE, rm_outliers = FALSE)
+```
+
+```{r}
+fieldplot_old <- check_plot_coord(
+  corner_data =  Ranong_plot_corner,
+  proj_coord = c("X_UTM", "Y_UTM"),  
+  rel_coord = c("X_loc", "Y_loc"),
+  plot_ID = "Plot_name",                      
+  trust_GPS_corners = FALSE,
+  tree_data = data_forAGB,
+  tree_coords = c("PX", "PY"),
+  tree_plot_ID = "Plot_name",           
+  draw_plot = TRUE, 
+  rm_outliers = FALSE
+)
+```
+```{r}
+fieldplot_new <- check_plot_coord(
+  corner_data =  Ranong_plot_corner,
+  proj_coord = c("X_UTM", "Y_UTM"),  
+  rel_coord = c("X_loc", "Y_loc"),
+  plot_ID = "Plot_name",                      
+  trust_GPS_corners = FALSE,
+  tree_data = new_data_for_AGB,
+  tree_coords = c("PX", "PY"),
+  tree_plot_ID = "Plot_name",           
+  draw_plot = TRUE, 
+  rm_outliers = FALSE
+)
+```
+
+
+```{r}
+st_write(
+  obj = fieldplot_old$polygon,
+  dsn = "~/Remote-sensing/Ranong_fieldplot_old.shp",
+  delete_layer = TRUE
+)
+```
+```{r}
+st_write(
+  obj = fieldplot_new$polygon,
+  dsn = "~/Remote-sensing/Ranong_fieldplot_new.shp",
+  delete_layer = TRUE
+)
+```
+
+```{r}
+# 20x20
+subplots_grid20_old <- divide_plot(
+  corner_data = fieldplot_old$corner_coord, 
+  rel_coord = c("x_rel","y_rel"),
+  proj_coord = c("x_proj","y_proj"),
+  grid_size = 20,
+  tree_data = data_forAGB, 
+  tree_coords = c("PX","PY")
+)
+
+#50x50
+subplots_grid50_old <- divide_plot(
+  corner_data = fieldplot_old$corner_coord, 
+  rel_coord = c("x_rel","y_rel"),
+  proj_coord = c("x_proj","y_proj"),
+  grid_size = 50,
+  tree_data = data_forAGB, 
+  tree_coords = c("PX","PY")
+)
+
+
+```
+
+```{r}
+# 20x20
+subplots_grid20_new <- divide_plot(
+  corner_data = fieldplot_new$corner_coord, 
+  rel_coord = c("x_rel","y_rel"),
+  proj_coord = c("x_proj","y_proj"),
+  grid_size = 20,
+  tree_data = new_data_for_AGB, 
+  tree_coords = c("PX","PY")
+)
+
+#50x50
+subplots_grid50_new <- divide_plot(
+  corner_data = fieldplot_old$corner_coord, 
+  rel_coord = c("x_rel","y_rel"),
+  proj_coord = c("x_proj","y_proj"),
+  grid_size = 50,
+  tree_data = data_forAGB, 
+  tree_coords = c("PX","PY")
+)
+```
+
+
+```{r}
+subplot_metric_perHA20_old <- subplot_summary(
+  subplots = subplots_grid20_old,
+  value = "AGB", 
+  per_ha = TRUE)
+
+```
+
+
+
+```{r}
+subplot_metric_perHA20_new <- subplot_summary(
+  subplots = subplots_grid20_new,
+  value = "AGB", 
+  per_ha = TRUE)
+```
+
+```{r}
+subplot_metric_perHA50_old <- subplot_summary(
+  subplots = subplots_grid50_old,
+  value = "AGB", 
+  per_ha = TRUE)
+```
+
+```{r}
+subplot_metric_perHA50_new <- subplot_summary(
+  subplots = subplots_grid50_new,
+  value = "AGB", 
+  per_ha = TRUE)
+```
+
+
+```{r}
+custom_plot_perHA20_old <- subplot_metric_perHA20_old$plot_design +
+  scale_fill_distiller(palette = "YlGnBu", direction = 1) 
+
+custom_plot_perHA20_old
+
+sf::st_write(custom_plot_perHA20_old,"~/Remote-sensing/polygon_20m_perHA.shp")
+```
+```{r}
+custom_plot_perHA20_new <- subplot_metric_perHA20_new$plot_design +
+  scale_fill_distiller(palette = "YlGnBu", direction = 1)
+
+custom_plot_perHA20_new
+
+```
+
+```{r}
+subplot_polygons20m_perHA <- sf::st_set_crs(
+ subplot_metric_perHA20_new$polygon ,
+  value = "EPSG:32647") 
+
+sf::st_write(subplot_polygons20m_perHA,"~/Remote-sensing/polygon_20m_perHA.shp")
+```
+
+
+```{r}
+custom_plot_perHA50_old <- subplot_metric_perHA50_old$plot_design +
+  scale_fill_distiller(palette = "YlGnBu", direction = 1) 
+
+custom_plot_perHA50_old
+```
+
+```{r}
+custom_plot_perHA50_new <- subplot_metric_perHA50_new$plot_design +
+  scale_fill_distiller(palette = "YlGnBu", direction = 1)
+
+custom_plot_perHA50_new
+```
+
+```{r}
+subplot_metric_sum20_old<- subplot_summary(
+  subplots = subplots_grid20_old,
+  value = "AGB",
+  fun = quantile, probs = 0.5, 
+  per_ha = FALSE)
+```
+```{r}
+custom_plot_qt <- subplot_metric_sum20_old$plot_design +
+  scale_fill_distiller(palette = "YlGnBu", direction = 1)
+
+custom_plot_qt
+```
+
+
+
+
